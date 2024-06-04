@@ -1,0 +1,161 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<h1 class="title">綁定帳戶</h1>
+<div id="notification" class="notification is-hidden"></div>
+<div class="box">
+    <div class="field">
+        <label class="label">店家名稱</label>
+        <div class="control">
+            <input class="input" type="text" id="storeName" readonly>
+        </div>
+    </div>
+    <div class="field">
+        <label class="label">您的Line名稱</label>
+        <div class="control">
+            <input class="input" type="text" id="displayName" readonly>
+        </div>
+    </div>
+    <div class="field" style="display: none;">
+        <label class="label">User ID</label>
+        <div class="control">
+            <input class="input" type="text" id="userId" readonly>
+        </div>
+    </div>
+    <div class="field">
+        <label class="label">電話號碼 <span class="has-text-danger">*</span></label>
+        <div class="control">
+            <input class="input" type="text" id="phoneNumber" required>
+        </div>
+    </div>
+    <div class="field">
+        <label class="label">Email <span class="has-text-danger">*</span></label>
+        <div class="control">
+            <input class="input" type="email" id="email" required>
+        </div>
+    </div>
+    <div class="field">
+        <label class="label">生日</label>
+        <div class="control">
+            <input class="input" type="date" id="birthday">
+        </div>
+        <p class="help is-danger">店家可以在生日月份提供相對應的優惠</p>
+    </div>
+    <div class="control">
+        <button id="bindButton" class="button is-primary">綁定帳戶</button>
+    </div>
+</div>
+
+<script src="https://static.line-scdn.net/liff/edge/2.1/sdk.js"></script>
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        function getQueryParam(param) {
+            let urlParams = new URLSearchParams(window.location.search);
+            return urlParams.get(param);
+        }
+
+        function showNotification(message, type='is-danger') {
+            const notification = document.getElementById('notification');
+            notification.textContent = message;
+            notification.className = `notification ${type}`;
+            notification.classList.remove('is-hidden');
+        }
+
+        function checkUserBinding(lineUserId, storeId) {
+            return fetch(`/check_binding?user_id=${lineUserId}&store_id=${storeId}`)
+                .then(response => response.json())
+                .then(data => data)
+                .catch(err => {
+                    console.error(err);
+                    return null;
+                });
+        }
+
+        let storeId = getQueryParam('store_id');
+        if (!storeId) {
+            showNotification("並沒有商店ID參數");
+            return;
+        }
+
+        fetch(`/get_store_name?store_id=${storeId}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.store_name) {
+                    document.getElementById('storeName').value = data.store_name;
+                    initializeLiff(data.liff_id);  // 初始化 LIFF
+                } else {
+                    showNotification("找不到該店家");
+                }
+            })
+            .catch(err => console.error(err));
+
+        function initializeLiff(liffId) {
+            liff.init({ liffId: liffId })
+                .then(() => {
+                    if (!liff.isLoggedIn()) {
+                        liff.login();
+                    } else {
+                        liff.getProfile().then(profile => {
+                            console.log(profile); // 用於調試
+                            document.getElementById('displayName').value = profile.displayName;
+                            document.getElementById('userId').value = profile.userId;
+
+                            // 檢查用戶是否已經綁定過
+                            checkUserBinding(profile.userId, storeId).then(data => {
+                                if (data && data.is_bound) {
+                                    document.getElementById('phoneNumber').value = data.phone_number;
+                                    document.getElementById('email').value = data.email;
+                                    document.getElementById('birthday').value = data.birthday;
+                                    document.getElementById('bindButton').textContent = '已綁定帳戶';
+                                    document.getElementById('bindButton').classList.add('is-static');
+                                    document.getElementById('bindButton').disabled = true;
+                                }
+                            });
+
+                            document.getElementById('bindButton').addEventListener('click', function() {
+                                let phoneNumber = document.getElementById('phoneNumber').value;
+                                let email = document.getElementById('email').value;
+                                let birthday = document.getElementById('birthday').value;
+
+                                if (!phoneNumber || !email) {
+                                    showNotification("請檢查，電話號碼、Email是必填資訊");
+                                    return;
+                                }
+
+                                fetch('/bind_line', {
+                                    method: 'POST',
+                                    headers: {
+                                        'Content-Type': 'application/json'
+                                    },
+                                    body: JSON.stringify({
+                                        line_user_id: profile.userId,
+                                        name: profile.displayName,
+                                        phone_number: phoneNumber,
+                                        email: email,
+                                        birthday: birthday,
+                                        store_id: storeId
+                                    })
+                                })
+                                .then(response => response.json().then(data => ({status: response.status, body: data})))
+                                .then(result => {
+                                    if (result.status === 201) {
+                                        showNotification(result.body.message, 'is-success');
+                                    } else if (result.status === 404) {
+                                        showNotification("找不到該店家", 'is-danger');
+                                    } else {
+                                        showNotification(result.body.message, 'is-danger');
+                                    }
+                                })
+                                .catch(err => {
+                                    console.error(err);
+                                    showNotification('綁定失敗，請稍後再試');
+                                });
+                            });
+                        }).catch(err => console.error('Error getting profile:', err));
+                    }
+                })
+                .catch(err => console.error('LIFF initialization failed:', err));
+        }
+    });
+</script>
+{% endblock %}
